@@ -54,12 +54,13 @@ if (process.env.CBB_GUARD_DEBUG) {  // 排查用：CBB_GUARD_DEBUG=1 时打印�
     `[cbb-guard:debug] frozen=${isFrozen(fp)} redzone_write=${isRedzoneWrite(fp)} exists=${fs.existsSync(rawPath)}\n`);
 }
 
-function bypassLog(action, target) {
+function bypassLog(action, target, extra) {
   try {
     fs.appendFileSync(DECISION_LOG, JSON.stringify({
-      type: "hook-bypass", ref: bypass, action, target, at: new Date().toISOString(),
+      type: "hook-bypass", ref: bypass, action, target, ...extra, at: new Date().toISOString(),
     }) + "\n");
-  } catch { /* 账写不进不阻断（但旁通要求账引用，此属异常环境，保守放行） */ }
+    return fs.existsSync(DECISION_LOG) ? null : "写后回读：账文件不存在";
+  } catch (e) { return e && e.code ? e.code : String(e).slice(0, 60); }
 }
 
 function deny(msg, rule, hit) {
@@ -72,9 +73,20 @@ function deny(msg, rule, hit) {
   process.exit(2);
 }
 
-// 旁通（有账引用）：放行一切并留账
+// 旁通（有账引用）：放行并留账
 if (bypass) {
-  bypassLog(`${tool} @ ${fp || cmd.slice(0, 80)}`, fp || cmd.slice(0, 80));
+  const target = fp || cmd.slice(0, 80);
+  const err = bypassLog(`${tool} @ ${target}`, target, { scope: "global(全规则)" });
+  if (err) {
+    // 0.1.1 修 G-2：留痕写不进去就**不放行**。原实现把 appendFileSync 包在 try/catch 里静默吞掉，
+    // 于是「CBB_GUARD_ROOT 指错 / 决策账不可写 / 目录不存在」这类环境错配下，旁通越过了全部规则
+    // 却一条账都没留——唯一该有痕迹的越权通道，恰好在这种时候没有痕迹（为空被读成通过）。
+    process.stderr.write(
+      `[cbb-guard] 拒绝旁通：留痕写不进去，无留痕不越权（原行为是静默放行）\n` +
+      `  落点：${DECISION_LOG}\n  原因：${err}\n` +
+      `  处置：核对 CBB_GUARD_ROOT 是否指向真实项目根（当前归一值 ${ROOT}），且决策账须可追加\n`);
+    process.exit(2);
+  }
   process.exit(0);
 }
 
