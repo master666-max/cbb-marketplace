@@ -62,8 +62,11 @@ function bypassLog(action, target) {
   } catch { /* 账写不进不阻断（但旁通要求账引用，此属异常环境，保守放行） */ }
 }
 
-function deny(msg) {
+function deny(msg, rule, hit) {
+  // 回执必带"命中第几条规则 + 触发片段"：不带命中面的拦截无法排障，
+  // 人会以为是宿主故障（0.1.1 修 G-1 时补）。
   process.stderr.write(`[cbb-guard] 拦截：${msg}\n` +
+    (rule ? `[cbb-guard] 命中：${rule}${hit ? " · " + hit : ""}\n` : "") +
     (bypass ? `[cbb-guard] 旁通引用已设（${bypass}），本应放行——请核对引用是否对应真实裁定\n` :
       `（如为已裁定操作：设 CBB_HOOK_BYPASS=<裁定引用> 后重试，旁通将自动入决策账）\n`));
   process.exit(2);
@@ -77,21 +80,35 @@ if (bypass) {
 
 // ---- 拦 A：冻结线 ----
 const isBash = tool === "bash";
-if (isBash && /(rm|del|rmdir|rd|move|ren|erase)\b/i.test(cmd) &&
-    /迷深实战-(本体库|工作区|工单|发车件|build-state)/i.test(cmd)) {
-  deny("冻结线清理/移动操作（迷深实战-* 为资料档，原位保全）");
+// 清理动词的识别（0.1.1 修 G-1）。原式 /(rm|del|rmdir|rd|move|ren|erase)\b/ 只锚**词尾**，
+// 词首不设界 ⇒ record / third / guard / platform / warm / standard / confirm 这些以 rm|rd|del
+// 收尾的普通英文词全命中；只要同一条命令里还提到 迷深实战-*，就被当成"清理冻结线"拦掉。
+// 实测（13 例夹具）：误伤 6／漏拦 0——连"测这道门自身的脚本"都因为出现 cbb-guard 一词被拦。
+// 现改两条：① 动词必须是**独立词**（前后都不接单词字符），② 真删除的 API 写法单独认。
+const RM_WORD = /(?<![\w.~-])(?:rm|rmdir|del|erase|rd|move|ren|mv|unlink)(?![\w-])/i;
+const RM_API = /\b(?:os\.(?:remove|unlink|replace|rename)|shutil\.(?:rmtree|move|remove)|fs\.(?:unlinkSync|unlink|rmSync|rm|rename)|Remove-Item)\b/i;
+const FROZEN_NAME = /迷深实战-(本体库|工作区|工单|发车件|build-state)/i;
+
+const rmHit = cmd.match(RM_WORD) || cmd.match(RM_API);
+const frozenHit = cmd.match(FROZEN_NAME);
+if (isBash && rmHit && frozenHit) {
+  const from = Math.max(0, rmHit.index - 14);
+  deny("冻结线清理/移动操作（迷深实战-* 为资料档，原位保全）",
+    "拦A/bash", `动词「${rmHit[0]}」于 …${cmd.slice(from, rmHit.index + rmHit[0].length + 14)}… × 冻结名「${frozenHit[0]}」`);
 }
 if ((tool === "write" || tool === "edit" || tool === "multiedit") && isFrozen(fp)) {
   const exists = fs.existsSync(rawPath) || fs.existsSync(fp);
   if (exists) {
-    deny(`冻结线文件覆盖（${fp.slice(ROOT.length)}）——迷深实战线已冻结为资料档（原位保全），新建文件不受限`);
+    deny(`冻结线文件覆盖（${fp.slice(ROOT.length)}）——迷深实战线已冻结为资料档（原位保全），新建文件不受限`,
+      "拦A/write", `路径落在冻结清单内且文件已存在`);
   }
   // 新文件：允许（additive）
 }
 
 // ---- 拦 B：红区 Write 整体覆盖 ----
 if (tool === "write" && isRedzoneWrite(fp)) {
-  deny(`红区文件 Write 整体覆盖（${fp.slice(ROOT.length)}）——契约/在案工单/决策账只许追加段（Edit）与账引用旁通`);
+  deny(`红区文件 Write 整体覆盖（${fp.slice(ROOT.length)}）——契约/在案工单/决策账只许追加段（Edit）与账引用旁通`,
+    "拦B/write", `路径前缀命中红区清单`);
 }
 
 process.exit(0);
