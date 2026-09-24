@@ -8,9 +8,12 @@ CBB 本地插件市场。当前收录：
 
 ## 安装（ZCode）
 
-1. 添加本仓为插件市场（marketplace 源＝本仓）；
-2. 安装 `cbb-guard`，**新会话生效**；
+1. **Settings → Plugin Management → Discover → `+`** 加本仓为市场源，填 `master666-max/cbb-marketplace`
+   （或整条 `https://github.com/master666-max/cbb-marketplace`；亦支持 Git URL / 本地目录 / 文件）；
+2. 在列表里安装 **`cbb-guard`**（完整身份 `cbb-guard@cbb-local`），**新会话生效**；
 3. 换机器/换项目根：设 env `CBB_GUARD_ROOT=<项目根>`（不带尾斜杠亦可）。
+4. 若在反代/受限网络下拉取失败（`RPC failed` / `timed out` / `early EOF`）：设 `ZCODE_HTTP_PROXY=http://host:port`
+   ——ZCode 只读这个变量，裸 `http_proxy` 不生效。
 
 ## 验证（两发正负对照）
 
